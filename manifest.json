@@ -1,0 +1,9 @@
+{
+  "id": "bera-annotation-copilot",
+  "name": "Bera Annotation Copilot",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Capture Markdown highlights and notes in sidecar JSON, then review them with AI.",
+  "author": "Bera",
+  "isDesktopOnly": false
+}

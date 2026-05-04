@@ -1,0 +1,436 @@
+.bera-annotation-highlight {
+  border-radius: 3px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.bera-annotation-yellow {
+  background: rgba(246, 207, 92, 0.34);
+}
+
+.bera-annotation-orange {
+  background: rgba(244, 169, 104, 0.3);
+}
+
+.bera-annotation-green {
+  background: rgba(136, 190, 139, 0.3);
+}
+
+.bera-annotation-blue {
+  background: rgba(126, 174, 218, 0.28);
+}
+
+.bera-annotation-pink {
+  background: rgba(228, 139, 166, 0.28);
+}
+
+.bera-annotation-purple {
+  background: rgba(168, 147, 211, 0.28);
+}
+
+.bera-annotation-floating-toolbar {
+  align-items: center;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.16);
+  display: none;
+  gap: 8px;
+  max-width: min(420px, calc(100vw - 24px));
+  padding: 8px 10px;
+  position: fixed;
+  z-index: 1000;
+}
+
+.bera-annotation-floating-toolbar.is-visible {
+  display: flex;
+}
+
+.bera-annotation-floating-toolbar__handle {
+  background: var(--background-modifier-border);
+  border-radius: 999px;
+  height: 22px;
+  width: 3px;
+}
+
+.bera-annotation-floating-toolbar__divider {
+  background: var(--background-modifier-border);
+  height: 24px;
+  width: 1px;
+}
+
+.bera-annotation-color-swatches {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.bera-annotation-color-swatches--highlight {
+  flex-wrap: nowrap;
+}
+
+.bera-annotation-floating-toolbar button.bera-annotation-swatch,
+.bera-annotation-note-popover button.bera-annotation-swatch,
+.bera-annotation-inline-editor button.bera-annotation-swatch,
+.bera-annotation-swatch {
+  appearance: none;
+  border: 1px solid rgba(0, 0, 0, 0.14) !important;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.64);
+  cursor: pointer;
+  height: 24px;
+  line-height: 1;
+  min-width: 24px;
+  position: relative;
+  padding: 0 !important;
+  transition:
+    box-shadow 120ms ease,
+    transform 120ms ease;
+  width: 24px;
+}
+
+.bera-annotation-swatch:hover {
+  box-shadow:
+    0 0 0 2px var(--background-primary),
+    0 0 0 3px currentColor,
+    inset 0 0 0 2px rgba(255, 255, 255, 0.72);
+  transform: translateY(-1px);
+}
+
+.bera-annotation-swatch.is-selected {
+  border: 1px solid rgba(0, 0, 0, 0.2) !important;
+  box-shadow:
+    0 0 0 2px var(--background-primary),
+    0 0 0 3px currentColor,
+    inset 0 0 0 2px rgba(255, 255, 255, 0.72) !important;
+  transform: translateY(-1px) scale(1.03);
+}
+
+.bera-annotation-swatch--yellow {
+  background: #f6cf5c !important;
+  background-color: #f6cf5c !important;
+  background-image: none !important;
+  color: #d2a233;
+}
+
+.bera-annotation-swatch--orange {
+  background: #f4a968 !important;
+  background-color: #f4a968 !important;
+  background-image: none !important;
+  color: #cf7d3d;
+}
+
+.bera-annotation-swatch--pink {
+  background: #e48ba6 !important;
+  background-color: #e48ba6 !important;
+  background-image: none !important;
+  color: #c66384;
+}
+
+.bera-annotation-swatch--green {
+  background: #88be8b !important;
+  background-color: #88be8b !important;
+  background-image: none !important;
+  color: #639b67;
+}
+
+.bera-annotation-swatch--blue {
+  background: #7eaeda !important;
+  background-color: #7eaeda !important;
+  background-image: none !important;
+  color: #5a8dbd;
+}
+
+.bera-annotation-swatch--purple {
+  background: #a893d3 !important;
+  background-color: #a893d3 !important;
+  background-image: none !important;
+  color: #806ab0;
+}
+
+.bera-annotation-icon-button {
+  align-items: center;
+  border-radius: 8px;
+  display: inline-flex;
+  height: 30px;
+  justify-content: center;
+  min-width: 30px;
+  padding: 0;
+}
+
+.bera-annotation-icon-button.is-saving {
+  opacity: 0.72;
+}
+
+.bera-annotation-note-popover {
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  left: 0;
+  min-width: 300px;
+  padding: 10px;
+  position: absolute;
+  top: calc(100% + 8px);
+}
+
+.bera-annotation-note-popover__excerpt {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  max-height: 68px;
+  overflow: auto;
+}
+
+.bera-annotation-note-popover textarea,
+.bera-annotation-inline-editor textarea {
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  color: var(--text-normal);
+  font-size: 13px;
+  line-height: 1.45;
+  min-height: 92px;
+  resize: vertical;
+  width: 100%;
+}
+
+.bera-annotation-note-popover__actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.bera-annotation-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  padding: 12px;
+}
+
+.bera-annotation-sidebar__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.bera-annotation-sidebar__title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.bera-annotation-sidebar__file {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.bera-annotation-filters,
+.bera-annotation-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.bera-annotation-filters input,
+.bera-annotation-filters select {
+  min-width: 0;
+}
+
+.bera-annotation-filters input[type="search"] {
+  flex: 1 1 160px;
+}
+
+.bera-annotation-toolbar {
+  align-items: center;
+}
+
+.bera-annotation-toolbar__summary {
+  color: var(--text-muted);
+  flex: 1 1 140px;
+  font-size: 12px;
+}
+
+.bera-annotation-sidebar__list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+}
+
+.bera-annotation-card {
+  --annotation-note-bg: var(--background-secondary);
+  --annotation-note-border: var(--background-modifier-border);
+  --annotation-note-accent: var(--interactive-accent);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0)),
+    var(--annotation-note-bg);
+  border: 1px solid var(--annotation-note-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 10px 11px;
+  position: relative;
+}
+
+.bera-annotation-card::before {
+  background: var(--annotation-note-accent);
+  border-radius: 0 0 999px 999px;
+  content: "";
+  height: 10px;
+  left: 18px;
+  opacity: 0.82;
+  position: absolute;
+  top: -1px;
+  width: 30px;
+}
+
+.bera-annotation-card__top {
+  align-items: flex-start;
+  display: flex;
+  gap: 8px;
+}
+
+.bera-annotation-card__top input[type="checkbox"] {
+  margin-top: 2px;
+}
+
+.bera-annotation-card__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.bera-annotation-card[data-color="yellow"] {
+  --annotation-note-bg: rgba(246, 207, 92, 0.16);
+  --annotation-note-border: rgba(210, 162, 51, 0.32);
+  --annotation-note-accent: #d2a233;
+}
+
+.bera-annotation-card[data-color="orange"] {
+  --annotation-note-bg: rgba(244, 169, 104, 0.15);
+  --annotation-note-border: rgba(207, 125, 61, 0.3);
+  --annotation-note-accent: #cf7d3d;
+}
+
+.bera-annotation-card[data-color="green"] {
+  --annotation-note-bg: rgba(136, 190, 139, 0.15);
+  --annotation-note-border: rgba(99, 155, 103, 0.28);
+  --annotation-note-accent: #639b67;
+}
+
+.bera-annotation-card[data-color="blue"] {
+  --annotation-note-bg: rgba(126, 174, 218, 0.15);
+  --annotation-note-border: rgba(90, 141, 189, 0.28);
+  --annotation-note-accent: #5a8dbd;
+}
+
+.bera-annotation-card[data-color="pink"] {
+  --annotation-note-bg: rgba(228, 139, 166, 0.14);
+  --annotation-note-border: rgba(198, 99, 132, 0.28);
+  --annotation-note-accent: #c66384;
+}
+
+.bera-annotation-card[data-color="purple"] {
+  --annotation-note-bg: rgba(168, 147, 211, 0.15);
+  --annotation-note-border: rgba(128, 106, 176, 0.28);
+  --annotation-note-accent: #806ab0;
+}
+
+.bera-annotation-card__sticky-header {
+  align-items: center;
+  color: var(--text-muted);
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.bera-annotation-card__dot {
+  background: var(--annotation-note-accent);
+  border-radius: 999px;
+  height: 9px;
+  width: 9px;
+}
+
+.bera-annotation-card__label {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.bera-annotation-card__time {
+  color: var(--text-faint);
+  font-size: 11px;
+  margin-left: auto;
+}
+
+.bera-annotation-card__text {
+  color: var(--text-normal);
+  font-size: 13px;
+  line-height: 1.45;
+  padding-left: 8px;
+  position: relative;
+}
+
+.bera-annotation-card__text::before {
+  background: var(--annotation-note-accent);
+  border-radius: 999px;
+  content: "";
+  height: 100%;
+  left: 0;
+  opacity: 0.42;
+  position: absolute;
+  top: 0;
+  width: 2px;
+}
+
+.bera-annotation-card__file {
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.bera-annotation-card__note {
+  color: var(--text-normal);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.bera-annotation-card__meta {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.bera-annotation-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.bera-annotation-inline-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bera-annotation-empty {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 12px 0;
+}
