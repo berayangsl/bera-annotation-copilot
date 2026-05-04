@@ -38,7 +38,25 @@ Send that zip to a friend. They can extract it into:
 <their-vault>/.obsidian/plugins/bera-annotation-copilot/
 ```
 
-The zip includes an `INSTALL.md` guide, including iPhone/iPad notes. Mobile installation is easiest when the desktop plugin setup is synced through Obsidian Sync with installed and active community plugin lists enabled.
+The zip includes an `INSTALL.md` guide. For iPhone/iPad, use the GitHub + BRAT beta path because Obsidian Sync did not reliably sync a manually copied `.obsidian/plugins/` bundle in testing.
+
+## BRAT / GitHub Beta
+
+Run:
+
+```powershell
+npm run package
+```
+
+Then create a GitHub release whose tag matches `manifest.json` version, and upload these release assets:
+
+```text
+dist/brat-release-assets/manifest.json
+dist/brat-release-assets/main.js
+dist/brat-release-assets/styles.css
+```
+
+On iOS/iPadOS, install BRAT and add the GitHub repository as a beta plugin.
 
 ## Release Notes
 

@@ -38,15 +38,16 @@ plugins/bera-annotation-copilot/bera-annotation-copilot/main.js
 
 ## iPhone / iPad 使用建议
 
-插件 manifest 已声明 `isDesktopOnly: false`，目标是兼容 iOS / iPadOS。但 iOS 上不方便直接访问 `.obsidian/plugins/` 隐藏配置目录，所以更推荐：
+插件 manifest 已声明 `isDesktopOnly: false`，目标是兼容 iOS / iPadOS。本地实测里，Obsidian Sync 可以同步 `Bera_Annotations/` 数据，但不会可靠下发手动复制到 `.obsidian/plugins/` 的插件三件套。
 
-1. 先在桌面端按上面的方式安装并启用插件。
-2. 如果使用 Obsidian Sync，在桌面端和移动端都打开 Settings -> Sync。
-3. 在 Vault configuration sync 中启用 `Installed community plugin list` 和 `Active community plugin list`。
-4. 等待手机端同步完成后，重启 Obsidian 移动端。
-5. 在手机端 Settings -> Community plugins 里确认 `Bera Annotation Copilot` 已安装并启用。
+移动端建议用 BRAT / GitHub beta 通道：
 
-如果不用 Obsidian Sync，而是 iCloud / 第三方同步，需要确保 `.obsidian/plugins/bera-annotation-copilot/` 和 `Bera_Annotations/` 都会被同步到移动端。
+1. 在 iPhone / iPad 的 Obsidian 里安装并启用 BRAT。
+2. 在 BRAT 中执行 `Add a beta plugin for testing`。
+3. 输入插件 GitHub repo URL。
+4. BRAT 安装完成后，在 Settings -> Community plugins 里启用 `Bera Annotation Copilot`。
+
+如果不用 BRAT，而是 iCloud / 第三方同步，需要确保 `.obsidian/plugins/bera-annotation-copilot/` 和 `Bera_Annotations/` 都会被同步到移动端。
 
 ## 使用
 
@@ -66,10 +67,4 @@ Bera_Annotations/
   index.json
 ```
 
-旧版本使用过的历史目录仍可读取：
-
-```text
-.bera-annotations/
-```
-
-新标注和新导出的 AI 回顾包会写入 `Bera_Annotations/`。原 Markdown 文件不会被写入高亮语法或批注内容。
+旧版本使用过的 `.bera-annotations/` 已迁入 `Bera_Annotations/`；代码仍保留旧目录读取兼容。新标注和新导出的 AI 回顾包会写入 `Bera_Annotations/`。原 Markdown 文件不会被写入高亮语法或批注内容。

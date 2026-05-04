@@ -38,13 +38,22 @@ dist/brat-release-assets/
 ## 待办
 
 1. 重载桌面端 Obsidian，确认新 id `bera-annotation-copilot` 对应的 `Bera Annotation Copilot` 可启用。
-2. 创建 GitHub repo，建议 repo 名：`bera-annotation-copilot`。
-3. 创建 release `0.1.0`。
-4. 上传 `dist/brat-release-assets/` 下的 `manifest.json`、`main.js`、`styles.css` 作为 release assets。
-5. iOS 端安装 BRAT，运行 `BRAT: Add a beta plugin for testing`，输入 GitHub repo URL，然后启用 `Bera Annotation Copilot`。
+2. 创建 GitHub repo，建议 repo 名：`bera-annotation-copilot`，建议先用 Public，且不要初始化 README / LICENSE / `.gitignore`。
+3. 将本地 repo push 到 GitHub。
+4. 创建 release `0.1.0`，tag 也使用 `0.1.0`，可标记为 pre-release。
+5. 上传 `dist/brat-release-assets/` 下的 `manifest.json`、`main.js`、`styles.css` 作为 release assets。
+6. iOS 端安装 BRAT，运行 `BRAT: Add a beta plugin for testing`，输入 GitHub repo URL，然后启用 `Bera Annotation Copilot`。
 
 plugin id 已合规迁移为 `bera-annotation-copilot`。官方 manifest 规范要求 plugin id 不包含 `obsidian`，并要求 id 与本地插件文件夹名一致。
 
+## 本地清理状态
+
+- 本地工程目录：`D:\工具开发\bera-annotation-copilot\`
+- 当前 Vault 插件目录：`C:\Users\sheng\Documents\obsidian\.obsidian\plugins\bera-annotation-copilot\`
+- 旧 Vault 插件目录已移出 `.obsidian/plugins`，避免 Obsidian / Sync 再看到旧 id。
+- 旧 `.bera-annotations` 数据已迁入 `Bera_Annotations` 后归档；代码仍保留旧目录读取兼容，便于未来遇到旧 Vault 时兜底。
+- 旧 id 的 dist 包已删除；当前发布只使用 `bera-annotation-copilot` 包和 `dist/brat-release-assets/`。
+
 ## 当前推进方案
 
-本地 id 迁移已完成，旧插件目录保留为回滚备份。当前缺口是 GitHub 账号/repo：本环境 GitHub connector 没有已安装账号，`gh` CLI 不可用。Bera 提供 repo 或完成 GitHub 授权后，上传 `dist/brat-release-assets/` 三件套并创建 `0.1.0` release。
+本地 id 迁移与旧目录清理已完成。当前缺口是 GitHub repo / remote：GitHub connector 当前登录为 `berayangsl`，但 GitHub App 没有安装到任何 repo；本机也没有 `gh` CLI。Bera 创建 repo 并提供 URL 后，继续执行 `git remote add`、`git push`，再创建 `0.1.0` release 并上传 `dist/brat-release-assets/` 三件套。
