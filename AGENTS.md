@@ -46,6 +46,15 @@ C:\Users\sheng\Documents\obsidian\.obsidian\plugins\bera-annotation-copilot\
 - 后续插件代码更新默认运行 `npm run build`；如果使用 `npm run dev` watch，esbuild 每次成功重建后也会同步到 Vault 插件目录。
 - `npm run install:dev` 保留为显式重装命令；不要删除安装目录里的 `data.json`。
 - 移动端验证前继续确认 `manifest.json` 的 `isDesktopOnly` 为 `false`，并确认 `.obsidian/community-plugins.json` 包含 `bera-annotation-copilot`。
+
+## 桌面 / iOS 版本一致性规则
+
+- 桌面端来源：本地工程构建后同步到 `C:\Users\sheng\Documents\obsidian\.obsidian\plugins\bera-annotation-copilot\`。
+- iOS / iPadOS 来源：GitHub release assets，经 BRAT 安装。
+- 当前 `0.1.0` 已确认桌面 Vault 插件目录与 BRAT release assets 的 `manifest.json`、`main.js`、`styles.css` hash 一致。
+- 后续只运行 `npm run build` 时，只能视为桌面端本地新版；iOS 不会同步变新。
+- 需要跨端一致时，必须 bump version，运行 `npm run package`，推送 git，创建同版本 GitHub release，并上传 `dist/brat-release-assets/` 三件套。
+- 若改动涉及 `Bera_Annotations/`、sidecar JSON、annotation 字段或索引格式，必须保持向后兼容，或先明确移动端 release blocker，避免桌面端写出 iOS 旧版读不了的数据。
 ## UTF-8 写入规则
 
 修改 Obsidian 中文项目文件、开发日志、AGENTS 或长 Markdown 时，使用：
