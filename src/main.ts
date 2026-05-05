@@ -1319,13 +1319,43 @@ function buildDraftFromDomSelection(
     return null;
   }
 
-  const selectionRect = getDomSelectionRect(selection);
-  const domRange = getDomSelectionDocumentRange(editorView, selection);
-  if (domRange) {
-    return buildDraftFromOffsets(filePath, editorView, domRange.from, domRange.to, selectionRect);
+  const selectedText = normalizeSelectionText(selection.toString());
+  if (!selectedText) {
+    return null;
   }
 
-  const fallbackRange = findSelectedTextRange(editorView.state.doc.toString(), selection.toString());
+  const selectionRect = getDomSelectionRect(selection);
+  const domRange = getDomSelectionDocumentRange(editorView, selection);
+  const docText = editorView.state.doc.toString();
+  if (domRange) {
+    const sourceText = editorView.state.doc.sliceString(domRange.from, domRange.to);
+    if (sourceRangeMatchesSelectedText(sourceText, selectedText)) {
+      return buildDraftFromOffsets(
+        filePath,
+        editorView,
+        domRange.from,
+        domRange.to,
+        selectionRect,
+        selectedText
+      );
+    }
+
+    const correctedRange = findSelectedTextRange(docText, selectedText, domRange);
+    if (correctedRange) {
+      return buildDraftFromOffsets(
+        filePath,
+        editorView,
+        correctedRange.from,
+        correctedRange.to,
+        selectionRect,
+        selectedText
+      );
+    }
+
+    return null;
+  }
+
+  const fallbackRange = findSelectedTextRange(docText, selectedText);
   if (!fallbackRange) {
     return null;
   }
@@ -1335,7 +1365,8 @@ function buildDraftFromDomSelection(
     editorView,
     fallbackRange.from,
     fallbackRange.to,
-    selectionRect
+    selectionRect,
+    selectedText
   );
 }
 
@@ -1344,7 +1375,8 @@ function buildDraftFromOffsets(
   editorView: EditorView,
   rawFrom: number,
   rawTo: number,
-  rectOverride: PendingAnnotationDraft["rect"] | null = null
+  rectOverride: PendingAnnotationDraft["rect"] | null = null,
+  selectedTextOverride: string | null = null
 ): PendingAnnotationDraft | null {
   const docLength = editorView.state.doc.length;
   const from = clamp(Math.min(rawFrom, rawTo), 0, docLength);
@@ -1354,7 +1386,10 @@ function buildDraftFromOffsets(
     return null;
   }
 
-  const selectedText = editorView.state.doc.sliceString(from, to);
+  const sourceSelectedText = editorView.state.doc.sliceString(from, to);
+  const selectedText = selectedTextOverride
+    ? normalizeSelectionText(selectedTextOverride)
+    : sourceSelectedText;
   if (!selectedText.trim()) {
     return null;
   }
@@ -1474,14 +1509,21 @@ function getDomSelectionDocumentRange(editorView: EditorView, selection: Selecti
   }
 }
 
-function findSelectedTextRange(docText: string, selectedText: string) {
+interface DocumentTextRange {
+  from: number;
+  to: number;
+}
+
+function findSelectedTextRange(
+  docText: string,
+  selectedText: string,
+  preferredRange: DocumentTextRange | null = null
+) {
   const directNeedle = selectedText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  const directIndex = docText.indexOf(directNeedle);
-  if (directIndex >= 0) {
-    return {
-      from: directIndex,
-      to: directIndex + directNeedle.length
-    };
+  const directRanges = findDirectTextRanges(docText, directNeedle);
+  const directRange = pickBestTextRange(directRanges, preferredRange);
+  if (directRange) {
+    return directRange;
   }
 
   const normalizedDoc = normalizeTextForLooseSearch(docText);
@@ -1490,16 +1532,187 @@ function findSelectedTextRange(docText: string, selectedText: string) {
     return null;
   }
 
-  const normalizedIndex = normalizedDoc.text.indexOf(normalizedNeedle);
-  if (normalizedIndex < 0) {
+  const looseRanges: DocumentTextRange[] = [];
+  let normalizedIndex = normalizedDoc.text.indexOf(normalizedNeedle);
+  while (normalizedIndex >= 0) {
+    const lastIndex = normalizedIndex + normalizedNeedle.length - 1;
+    const from = normalizedDoc.map[normalizedIndex];
+    const to = normalizedDoc.map[lastIndex] + 1;
+    if (Number.isFinite(from) && Number.isFinite(to) && from < to) {
+      looseRanges.push({ from, to });
+    }
+    normalizedIndex = normalizedDoc.text.indexOf(
+      normalizedNeedle,
+      normalizedIndex + Math.max(1, normalizedNeedle.length)
+    );
+  }
+
+  const looseRange = pickBestTextRange(looseRanges, preferredRange);
+  if (looseRange) {
+    return looseRange;
+  }
+
+  return findAnchoredTextRange(normalizedDoc, normalizedNeedle, preferredRange);
+}
+
+function findDirectTextRanges(docText: string, needle: string) {
+  const ranges: DocumentTextRange[] = [];
+  if (!needle) {
+    return ranges;
+  }
+
+  let index = docText.indexOf(needle);
+  while (index >= 0) {
+    ranges.push({
+      from: index,
+      to: index + needle.length
+    });
+    index = docText.indexOf(needle, index + Math.max(1, needle.length));
+  }
+
+  return ranges;
+}
+
+function pickBestTextRange(
+  ranges: DocumentTextRange[],
+  preferredRange: DocumentTextRange | null
+) {
+  if (ranges.length === 0) {
     return null;
   }
 
-  const lastIndex = normalizedIndex + normalizedNeedle.length - 1;
+  if (!preferredRange) {
+    return ranges[0];
+  }
+
+  const preferredCenter = (preferredRange.from + preferredRange.to) / 2;
+  return ranges
+    .slice()
+    .sort((a, b) => {
+      const aInside = a.from >= preferredRange.from && a.to <= preferredRange.to;
+      const bInside = b.from >= preferredRange.from && b.to <= preferredRange.to;
+      if (aInside !== bInside) {
+        return aInside ? -1 : 1;
+      }
+
+      const aCenter = (a.from + a.to) / 2;
+      const bCenter = (b.from + b.to) / 2;
+      return Math.abs(aCenter - preferredCenter) - Math.abs(bCenter - preferredCenter);
+    })[0];
+}
+
+function findAnchoredTextRange(
+  normalizedDoc: { text: string; map: number[] },
+  normalizedNeedle: string,
+  preferredRange: DocumentTextRange | null
+) {
+  const fragmentLength = Math.min(32, Math.max(8, Math.floor(normalizedNeedle.length / 4)));
+  if (normalizedNeedle.length < fragmentLength * 2) {
+    return null;
+  }
+
+  const prefix = normalizedNeedle.slice(0, fragmentLength);
+  const suffix = normalizedNeedle.slice(normalizedNeedle.length - fragmentLength);
+  const prefixIndexes = findAllTextIndexes(normalizedDoc.text, prefix);
+  const suffixIndexes = findAllTextIndexes(normalizedDoc.text, suffix);
+  const candidates: Array<DocumentTextRange & { normalizedLength: number }> = [];
+  const maxNormalizedLength = normalizedNeedle.length * 2 + 200;
+
+  for (const prefixIndex of prefixIndexes) {
+    for (const suffixIndex of suffixIndexes) {
+      if (suffixIndex < prefixIndex + fragmentLength) {
+        continue;
+      }
+
+      const normalizedLength = suffixIndex + fragmentLength - prefixIndex;
+      if (normalizedLength > maxNormalizedLength) {
+        continue;
+      }
+
+      const from = normalizedDoc.map[prefixIndex];
+      const to = normalizedDoc.map[suffixIndex + fragmentLength - 1] + 1;
+      if (Number.isFinite(from) && Number.isFinite(to) && from < to) {
+        candidates.push({ from, to, normalizedLength });
+      }
+    }
+  }
+
+  return pickBestAnchoredRange(candidates, normalizedNeedle.length, preferredRange);
+}
+
+function findAllTextIndexes(text: string, needle: string) {
+  const indexes: number[] = [];
+  if (!needle) {
+    return indexes;
+  }
+
+  let index = text.indexOf(needle);
+  while (index >= 0) {
+    indexes.push(index);
+    index = text.indexOf(needle, index + 1);
+  }
+
+  return indexes;
+}
+
+function pickBestAnchoredRange(
+  ranges: Array<DocumentTextRange & { normalizedLength: number }>,
+  expectedNormalizedLength: number,
+  preferredRange: DocumentTextRange | null
+) {
+  if (ranges.length === 0) {
+    return null;
+  }
+
+  const preferredCenter = preferredRange ? (preferredRange.from + preferredRange.to) / 2 : null;
+  const best = ranges
+    .slice()
+    .sort((a, b) => {
+      const aInside = preferredRange
+        ? a.from >= preferredRange.from && a.to <= preferredRange.to
+        : false;
+      const bInside = preferredRange
+        ? b.from >= preferredRange.from && b.to <= preferredRange.to
+        : false;
+      if (aInside !== bInside) {
+        return aInside ? -1 : 1;
+      }
+
+      const lengthScore =
+        Math.abs(a.normalizedLength - expectedNormalizedLength) -
+        Math.abs(b.normalizedLength - expectedNormalizedLength);
+      if (lengthScore !== 0) {
+        return lengthScore;
+      }
+
+      if (preferredCenter !== null) {
+        const aCenter = (a.from + a.to) / 2;
+        const bCenter = (b.from + b.to) / 2;
+        return Math.abs(aCenter - preferredCenter) - Math.abs(bCenter - preferredCenter);
+      }
+
+      return a.from - b.from;
+    })[0];
+
   return {
-    from: normalizedDoc.map[normalizedIndex],
-    to: normalizedDoc.map[lastIndex] + 1
+    from: best.from,
+    to: best.to
   };
+}
+
+function normalizeSelectionText(input: string) {
+  return input.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+}
+
+function sourceRangeMatchesSelectedText(sourceText: string, selectedText: string) {
+  if (sourceText === selectedText) {
+    return true;
+  }
+
+  return (
+    normalizeTextForLooseSearch(sourceText).text ===
+    normalizeTextForLooseSearch(selectedText).text
+  );
 }
 
 function normalizeTextForLooseSearch(input: string) {
@@ -1554,7 +1767,15 @@ function normalizeTextForLooseSearch(input: string) {
         }
       }
 
-      if (isMarkdownListMarker(input, index)) {
+      const headingMarkerEnd = getMarkdownHeadingMarkerEnd(input, index);
+      if (headingMarkerEnd !== null) {
+        index = headingMarkerEnd;
+        char = input[index];
+        while (char === " " || char === "\t") {
+          index += 1;
+          char = input[index];
+        }
+      } else if (isMarkdownListMarker(input, index)) {
         index += 1;
         char = input[index];
         while (char === " " || char === "\t") {
@@ -1602,7 +1823,23 @@ function normalizeTextForLooseSearch(input: string) {
 
 function isMarkdownListMarker(input: string, index: number) {
   const char = input[index];
-  return (char === "-" || char === "+" || char === "*") && /\s/.test(input[index + 1] ?? "");
+  return (
+    (char === "-" || char === "+" || char === "*") &&
+    /\s/.test(input[index + 1] ?? "")
+  );
+}
+
+function getMarkdownHeadingMarkerEnd(input: string, index: number) {
+  let cursor = index;
+  while (input[cursor] === "#" && cursor - index < 6) {
+    cursor += 1;
+  }
+
+  if (cursor === index || (input[cursor] !== " " && input[cursor] !== "\t")) {
+    return null;
+  }
+
+  return cursor;
 }
 
 function getOrderedListMarkerEnd(input: string, index: number) {
@@ -1756,7 +1993,10 @@ function getAnnotationRange(doc: EditorView["state"]["doc"], annotation: BeraAnn
     const to = toLine.from + anchor.toCh;
     const selectedAtAnchor = doc.sliceString(from, to);
 
-    if (selectedAtAnchor === annotation.selectedText) {
+    if (
+      selectedAtAnchor === annotation.selectedText ||
+      sourceRangeMatchesSelectedText(selectedAtAnchor, annotation.selectedText)
+    ) {
       return { from, to };
     }
   }
