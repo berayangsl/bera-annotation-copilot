@@ -158,6 +158,16 @@ export default class BeraAnnotationPlugin extends Plugin {
         }
       })
     ]);
+    this.registerDomEvent(document, "selectionchange", () => {
+      window.requestAnimationFrame(() => {
+        const editorView = this.getEditorView();
+        if (!editorView) {
+          return;
+        }
+
+        this.floatingToolbar?.handleDomSelectionChange(editorView);
+      });
+    });
 
     this.registerView(
       VIEW_TYPE_ANNOTATION_SIDEBAR,
@@ -296,9 +306,20 @@ export default class BeraAnnotationPlugin extends Plugin {
 
   async createAnnotationFromSelection(editor: Editor, view: MarkdownView) {
     const file = view.file;
-    const selectedText = editor.getSelection();
+    if (!file) {
+      new Notice("Select text in a Markdown file first.");
+      return;
+    }
 
-    if (!file || !selectedText.trim()) {
+    const editorView = this.getEditorView();
+    const draftFromEditorView = editorView ? buildDraftFromEditorView(file.path, editorView) : null;
+    if (draftFromEditorView) {
+      this.floatingToolbar?.showDraft(draftFromEditorView, { openNote: true });
+      return;
+    }
+
+    const selectedText = editor.getSelection();
+    if (!selectedText.trim()) {
       new Notice("Select text in a Markdown file first.");
       return;
     }
@@ -307,11 +328,6 @@ export default class BeraAnnotationPlugin extends Plugin {
     const to = editor.getCursor("to");
     const startLine = editor.getLine(from.line) ?? "";
     const endLine = editor.getLine(to.line) ?? "";
-
-    const editorView = this.getEditorView();
-    if (editorView && this.floatingToolbar?.showForEditorView(editorView, { openNote: true })) {
-      return;
-    }
 
     const centerX = window.innerWidth / 2;
     const centerY = window.innerHeight / 2;
@@ -1083,6 +1099,14 @@ class AnnotationFloatingToolbar {
     this.showForEditorView(editorView);
   }
 
+  handleDomSelectionChange(editorView: EditorView) {
+    if (!getDomSelectionInsideEditor(editorView)) {
+      return;
+    }
+
+    this.showForEditorView(editorView);
+  }
+
   showForEditorView(editorView: EditorView, options: { openNote?: boolean } = {}) {
     const file = this.plugin.getActiveMarkdownFile();
     if (!file) {
@@ -1268,13 +1292,68 @@ function buildDraftFromEditorView(
   filePath: string,
   editorView: EditorView
 ): PendingAnnotationDraft | null {
+  const domDraft = buildDraftFromDomSelection(filePath, editorView);
+  if (domDraft) {
+    return domDraft;
+  }
+
   const selection = editorView.state.selection.main;
-  if (selection.empty) {
+  if (!selection.empty) {
+    return buildDraftFromOffsets(
+      filePath,
+      editorView,
+      Math.min(selection.from, selection.to),
+      Math.max(selection.from, selection.to)
+    );
+  }
+
+  return null;
+}
+
+function buildDraftFromDomSelection(
+  filePath: string,
+  editorView: EditorView
+): PendingAnnotationDraft | null {
+  const selection = getDomSelectionInsideEditor(editorView);
+  if (!selection) {
     return null;
   }
 
-  const from = Math.min(selection.from, selection.to);
-  const to = Math.max(selection.from, selection.to);
+  const selectionRect = getDomSelectionRect(selection);
+  const domRange = getDomSelectionDocumentRange(editorView, selection);
+  if (domRange) {
+    return buildDraftFromOffsets(filePath, editorView, domRange.from, domRange.to, selectionRect);
+  }
+
+  const fallbackRange = findSelectedTextRange(editorView.state.doc.toString(), selection.toString());
+  if (!fallbackRange) {
+    return null;
+  }
+
+  return buildDraftFromOffsets(
+    filePath,
+    editorView,
+    fallbackRange.from,
+    fallbackRange.to,
+    selectionRect
+  );
+}
+
+function buildDraftFromOffsets(
+  filePath: string,
+  editorView: EditorView,
+  rawFrom: number,
+  rawTo: number,
+  rectOverride: PendingAnnotationDraft["rect"] | null = null
+): PendingAnnotationDraft | null {
+  const docLength = editorView.state.doc.length;
+  const from = clamp(Math.min(rawFrom, rawTo), 0, docLength);
+  const to = clamp(Math.max(rawFrom, rawTo), 0, docLength);
+
+  if (from === to) {
+    return null;
+  }
+
   const selectedText = editorView.state.doc.sliceString(from, to);
   if (!selectedText.trim()) {
     return null;
@@ -1287,7 +1366,7 @@ function buildDraftFromEditorView(
   const fromCoords = editorView.coordsAtPos(from);
   const toCoords = editorView.coordsAtPos(to);
   const editorRect = editorView.dom.getBoundingClientRect();
-  const rect = {
+  const rect = rectOverride ?? {
     top: Math.min(fromCoords?.top ?? editorRect.top, toCoords?.top ?? editorRect.top),
     bottom: Math.max(fromCoords?.bottom ?? editorRect.bottom, toCoords?.bottom ?? editorRect.bottom),
     left: Math.min(fromCoords?.left ?? editorRect.left, toCoords?.left ?? editorRect.left),
@@ -1311,6 +1390,232 @@ function buildDraftFromEditorView(
     },
     rect
   };
+}
+
+function getDomSelectionInsideEditor(editorView: EditorView) {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+    return null;
+  }
+
+  const selectedText = selection.toString();
+  if (!selectedText.trim()) {
+    return null;
+  }
+
+  const { anchorNode, focusNode } = selection;
+  if (!anchorNode || !focusNode) {
+    return null;
+  }
+
+  if (!editorView.dom.contains(anchorNode) || !editorView.dom.contains(focusNode)) {
+    return null;
+  }
+
+  return selection;
+}
+
+function getDomSelectionRect(selection: Selection): PendingAnnotationDraft["rect"] | null {
+  if (selection.rangeCount === 0) {
+    return null;
+  }
+
+  try {
+    const range = selection.getRangeAt(0);
+    const rects = Array.from(range.getClientRects()).filter(
+      (rect) => rect.width > 0 && rect.height > 0
+    );
+    const usableRects = rects.length > 0 ? rects : [range.getBoundingClientRect()].filter(
+      (rect) => rect.width > 0 && rect.height > 0
+    );
+
+    if (usableRects.length === 0) {
+      return null;
+    }
+
+    return usableRects.reduce(
+      (acc, rect) => ({
+        top: Math.min(acc.top, rect.top),
+        bottom: Math.max(acc.bottom, rect.bottom),
+        left: Math.min(acc.left, rect.left),
+        right: Math.max(acc.right, rect.right)
+      }),
+      {
+        top: usableRects[0].top,
+        bottom: usableRects[0].bottom,
+        left: usableRects[0].left,
+        right: usableRects[0].right
+      }
+    );
+  } catch (error) {
+    return null;
+  }
+}
+
+function getDomSelectionDocumentRange(editorView: EditorView, selection: Selection) {
+  const { anchorNode, focusNode } = selection;
+  if (!anchorNode || !focusNode) {
+    return null;
+  }
+
+  try {
+    const anchor = editorView.posAtDOM(anchorNode, selection.anchorOffset);
+    const focus = editorView.posAtDOM(focusNode, selection.focusOffset);
+    if (anchor === focus) {
+      return null;
+    }
+
+    return {
+      from: Math.min(anchor, focus),
+      to: Math.max(anchor, focus)
+    };
+  } catch (error) {
+    return null;
+  }
+}
+
+function findSelectedTextRange(docText: string, selectedText: string) {
+  const directNeedle = selectedText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const directIndex = docText.indexOf(directNeedle);
+  if (directIndex >= 0) {
+    return {
+      from: directIndex,
+      to: directIndex + directNeedle.length
+    };
+  }
+
+  const normalizedDoc = normalizeTextForLooseSearch(docText);
+  const normalizedNeedle = normalizeTextForLooseSearch(selectedText).text;
+  if (!normalizedNeedle) {
+    return null;
+  }
+
+  const normalizedIndex = normalizedDoc.text.indexOf(normalizedNeedle);
+  if (normalizedIndex < 0) {
+    return null;
+  }
+
+  const lastIndex = normalizedIndex + normalizedNeedle.length - 1;
+  return {
+    from: normalizedDoc.map[normalizedIndex],
+    to: normalizedDoc.map[lastIndex] + 1
+  };
+}
+
+function normalizeTextForLooseSearch(input: string) {
+  const chars: string[] = [];
+  const map: number[] = [];
+  let atLineStart = true;
+  let pendingSpaceIndex: number | null = null;
+
+  const emitSpace = (index: number) => {
+    if (chars.length === 0 || chars[chars.length - 1] === " ") {
+      return;
+    }
+
+    pendingSpaceIndex = index;
+  };
+
+  const flushSpace = () => {
+    if (pendingSpaceIndex === null) {
+      return;
+    }
+
+    chars.push(" ");
+    map.push(pendingSpaceIndex);
+    pendingSpaceIndex = null;
+  };
+
+  for (let index = 0; index < input.length; index += 1) {
+    let char = input[index];
+
+    if (char === "\r") {
+      continue;
+    }
+
+    if (char === "\n") {
+      emitSpace(index);
+      atLineStart = true;
+      continue;
+    }
+
+    if (atLineStart) {
+      while (char === " " || char === "\t") {
+        index += 1;
+        char = input[index];
+      }
+
+      while (char === ">") {
+        index += 1;
+        char = input[index];
+        while (char === " " || char === "\t") {
+          index += 1;
+          char = input[index];
+        }
+      }
+
+      if (isMarkdownListMarker(input, index)) {
+        index += 1;
+        char = input[index];
+        while (char === " " || char === "\t") {
+          index += 1;
+          char = input[index];
+        }
+      } else {
+        const orderedMarkerEnd = getOrderedListMarkerEnd(input, index);
+        if (orderedMarkerEnd !== null) {
+          index = orderedMarkerEnd;
+          char = input[index];
+          while (char === " " || char === "\t") {
+            index += 1;
+            char = input[index];
+          }
+        }
+      }
+
+      atLineStart = false;
+    }
+
+    if (!char) {
+      continue;
+    }
+
+    if (char === "*" || char === "`") {
+      continue;
+    }
+
+    if (/\s/.test(char)) {
+      emitSpace(index);
+      continue;
+    }
+
+    flushSpace();
+    chars.push(char);
+    map.push(index);
+  }
+
+  return {
+    text: chars.join("").trim(),
+    map
+  };
+}
+
+function isMarkdownListMarker(input: string, index: number) {
+  const char = input[index];
+  return (char === "-" || char === "+" || char === "*") && /\s/.test(input[index + 1] ?? "");
+}
+
+function getOrderedListMarkerEnd(input: string, index: number) {
+  let cursor = index;
+  while (/\d/.test(input[cursor] ?? "")) {
+    cursor += 1;
+  }
+
+  if (cursor === index || input[cursor] !== ".") {
+    return null;
+  }
+
+  return /\s/.test(input[cursor + 1] ?? "") ? cursor + 1 : null;
 }
 
 function renderColorSwatches(
