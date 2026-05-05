@@ -30,6 +30,36 @@
   background: rgba(168, 147, 211, 0.28);
 }
 
+::highlight(bera-annotation-rendered-yellow) {
+  background-color: rgba(246, 207, 92, 0.58);
+  color: inherit;
+}
+
+::highlight(bera-annotation-rendered-orange) {
+  background-color: rgba(244, 169, 104, 0.56);
+  color: inherit;
+}
+
+::highlight(bera-annotation-rendered-green) {
+  background-color: rgba(136, 190, 139, 0.56);
+  color: inherit;
+}
+
+::highlight(bera-annotation-rendered-blue) {
+  background-color: rgba(126, 174, 218, 0.54);
+  color: inherit;
+}
+
+::highlight(bera-annotation-rendered-pink) {
+  background-color: rgba(228, 139, 166, 0.54);
+  color: inherit;
+}
+
+::highlight(bera-annotation-rendered-purple) {
+  background-color: rgba(168, 147, 211, 0.54);
+  color: inherit;
+}
+
 .bera-annotation-floating-toolbar {
   align-items: center;
   background: var(--background-primary);

@@ -140,6 +140,10 @@ const annotationStateField = StateField.define<DecorationSet>({
 
 export default class BeraAnnotationPlugin extends Plugin {
   private floatingToolbar: AnnotationFloatingToolbar | null = null;
+  private activeAnnotations: BeraAnnotation[] = [];
+  private renderedHighlightRefreshFrame: number | null = null;
+  private renderedHighlightObserver: MutationObserver | null = null;
+  private lastMarkdownFilePath: string | null = null;
   settings: BeraAnnotationSettings = DEFAULT_SETTINGS;
 
   async onload() {
@@ -155,6 +159,10 @@ export default class BeraAnnotationPlugin extends Plugin {
           update.viewportChanged
         ) {
           this.floatingToolbar?.handleEditorUpdate(update.view);
+        }
+
+        if (update.docChanged || update.viewportChanged) {
+          this.scheduleRenderedHighlightRefresh();
         }
       })
     ]);
@@ -250,6 +258,11 @@ export default class BeraAnnotationPlugin extends Plugin {
         void this.refreshActiveFile();
       })
     );
+    this.registerEvent(
+      this.app.workspace.on("layout-change", () => {
+        this.scheduleRenderedHighlightRefresh();
+      })
+    );
 
     this.app.workspace.onLayoutReady(() => {
       void this.refreshActiveFile();
@@ -257,6 +270,13 @@ export default class BeraAnnotationPlugin extends Plugin {
   }
 
   onunload() {
+    if (this.renderedHighlightRefreshFrame !== null) {
+      window.cancelAnimationFrame(this.renderedHighlightRefreshFrame);
+      this.renderedHighlightRefreshFrame = null;
+    }
+    this.renderedHighlightObserver?.disconnect();
+    this.renderedHighlightObserver = null;
+    this.clearRenderedHighlights();
     this.floatingToolbar?.destroy();
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_ANNOTATION_SIDEBAR);
   }
@@ -398,7 +418,7 @@ export default class BeraAnnotationPlugin extends Plugin {
   }
 
   async getCurrentFileAnnotations() {
-    const file = this.getActiveFile();
+    const file = this.getActiveFile() ?? this.getLastMarkdownFile();
     if (!file) {
       return { file: null, annotations: [] as BeraAnnotation[] };
     }
@@ -485,23 +505,141 @@ export default class BeraAnnotationPlugin extends Plugin {
   }
 
   async refreshActiveFile() {
-    const file = this.getActiveFile();
-    const editorView = this.getEditorView();
-    if (!editorView) {
+    const file = this.getActiveFile() ?? this.getLastMarkdownFile();
+    if (file) {
+      this.lastMarkdownFilePath = file.path;
+    }
+
+    const annotations = file ? await this.loadAnnotationsForFile(file.path) : [];
+    this.activeAnnotations = annotations;
+
+    if (!file) {
+      this.lastMarkdownFilePath = null;
+      this.clearRenderedHighlights();
+      this.renderedHighlightObserver?.disconnect();
+      this.renderedHighlightObserver = null;
       await this.refreshSidebar();
       return;
     }
 
-    const annotations = file ? await this.loadAnnotationsForFile(file.path) : [];
-    try {
-      editorView.dispatch({
-        effects: setAnnotationsEffect.of(annotations)
-      });
-    } catch (error) {
-      console.error("Could not refresh annotation decorations", error);
+    const editorView = this.getEditorView();
+    if (editorView) {
+      try {
+        editorView.dispatch({
+          effects: setAnnotationsEffect.of(annotations)
+        });
+      } catch (error) {
+        console.error("Could not refresh annotation decorations", error);
+      }
     }
 
+    this.scheduleRenderedHighlightRefresh();
+
     await this.refreshSidebar();
+  }
+
+  private scheduleRenderedHighlightRefresh() {
+    if (this.renderedHighlightRefreshFrame !== null) {
+      window.cancelAnimationFrame(this.renderedHighlightRefreshFrame);
+    }
+
+    this.renderedHighlightRefreshFrame = window.requestAnimationFrame(() => {
+      this.renderedHighlightRefreshFrame = null;
+      this.renderRenderedHighlights(this.activeAnnotations);
+    });
+  }
+
+  private clearRenderedHighlights() {
+    const api = getHighlightApi();
+    if (!api) {
+      return;
+    }
+
+    for (const color of COLOR_OPTIONS) {
+      api.registry.delete(getRenderedHighlightName(color));
+    }
+  }
+
+  private renderRenderedHighlights(annotations: BeraAnnotation[]) {
+    const api = getHighlightApi();
+    if (!api) {
+      return;
+    }
+
+    const targets = this.getRenderedHighlightTargets();
+    if (targets.length === 0) {
+      return;
+    }
+
+    this.clearRenderedHighlights();
+    this.observeRenderedHighlightTargets(targets.map((target) => target.root));
+
+    const rangesByColor = new Map<AnnotationColor, Range[]>();
+
+    for (const annotation of annotations) {
+      for (const target of targets) {
+        const sourceRect = target.editorView
+          ? getAnnotationSourceRect(target.editorView, annotation)
+          : null;
+        const ranges = findRenderedAnnotationRanges(target.root, annotation, sourceRect);
+        if (ranges.length === 0) {
+          continue;
+        }
+
+        const colorRanges = rangesByColor.get(annotation.color) ?? [];
+        colorRanges.push(...ranges);
+        rangesByColor.set(annotation.color, colorRanges);
+      }
+    }
+
+    for (const [color, ranges] of rangesByColor) {
+      api.registry.set(getRenderedHighlightName(color), new api.HighlightCtor(...ranges));
+    }
+  }
+
+  private observeRenderedHighlightTargets(roots: HTMLElement[]) {
+    this.renderedHighlightObserver?.disconnect();
+    this.renderedHighlightObserver = null;
+
+    if (roots.length === 0 || typeof MutationObserver === "undefined") {
+      return;
+    }
+
+    const observer = new MutationObserver(() => {
+      this.scheduleRenderedHighlightRefresh();
+    });
+    for (const root of roots) {
+      observer.observe(root, {
+        childList: true,
+        characterData: true,
+        subtree: true
+      });
+    }
+    this.renderedHighlightObserver = observer;
+  }
+
+  private getRenderedHighlightTargets() {
+    const targets: RenderedHighlightTarget[] = [];
+    const seen = new Set<HTMLElement>();
+    const markdownView = this.getMarkdownViewForHighlights();
+    const editorView = this.getEditorView(markdownView);
+
+    const addTarget = (root: HTMLElement | null | undefined, targetEditorView: EditorView | null) => {
+      if (!root || !root.isConnected || seen.has(root)) {
+        return;
+      }
+
+      seen.add(root);
+      targets.push({ root, editorView: targetEditorView });
+    };
+
+    addTarget(editorView?.dom, editorView ?? null);
+
+    for (const root of getMarkdownPreviewRoots(markdownView, editorView?.dom ?? null)) {
+      addTarget(root, null);
+    }
+
+    return targets;
   }
 
   async refreshSidebar() {
@@ -672,8 +810,39 @@ export default class BeraAnnotationPlugin extends Plugin {
     return this.app.workspace.getActiveFile();
   }
 
-  private getEditorView() {
-    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+  private getLastMarkdownFile() {
+    if (!this.lastMarkdownFilePath) {
+      return null;
+    }
+
+    const file = this.app.vault.getAbstractFileByPath(this.lastMarkdownFilePath);
+    return file instanceof TFile ? file : null;
+  }
+
+  private isAnnotationSidebarActive() {
+    return this.app.workspace.activeLeaf?.view instanceof AnnotationSidebarView;
+  }
+
+  private getMarkdownViewForHighlights() {
+    const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (activeView && (!this.lastMarkdownFilePath || activeView.file?.path === this.lastMarkdownFilePath)) {
+      return activeView;
+    }
+
+    for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+      const view = leaf.view;
+      if (
+        view instanceof MarkdownView &&
+        (!this.lastMarkdownFilePath || view.file?.path === this.lastMarkdownFilePath)
+      ) {
+        return view;
+      }
+    }
+
+    return activeView ?? null;
+  }
+
+  private getEditorView(view = this.app.workspace.getActiveViewOfType(MarkdownView)) {
     const maybeEditorView = (view?.editor as unknown as { cm?: EditorView })?.cm;
     return maybeEditorView && typeof maybeEditorView.dispatch === "function"
       ? maybeEditorView
@@ -1352,6 +1521,18 @@ function buildDraftFromDomSelection(
       );
     }
 
+    const unanchoredRange = findSelectedTextRange(docText, selectedText);
+    if (unanchoredRange) {
+      return buildDraftFromOffsets(
+        filePath,
+        editorView,
+        unanchoredRange.from,
+        unanchoredRange.to,
+        selectionRect,
+        selectedText
+      );
+    }
+
     return null;
   }
 
@@ -1532,27 +1713,38 @@ function findSelectedTextRange(
     return null;
   }
 
-  const looseRanges: DocumentTextRange[] = [];
-  let normalizedIndex = normalizedDoc.text.indexOf(normalizedNeedle);
-  while (normalizedIndex >= 0) {
-    const lastIndex = normalizedIndex + normalizedNeedle.length - 1;
-    const from = normalizedDoc.map[normalizedIndex];
-    const to = normalizedDoc.map[lastIndex] + 1;
-    if (Number.isFinite(from) && Number.isFinite(to) && from < to) {
-      looseRanges.push({ from, to });
-    }
-    normalizedIndex = normalizedDoc.text.indexOf(
-      normalizedNeedle,
-      normalizedIndex + Math.max(1, normalizedNeedle.length)
-    );
-  }
-
+  const looseRanges = findNormalizedTextRanges(normalizedDoc, normalizedNeedle);
   const looseRange = pickBestTextRange(looseRanges, preferredRange);
   if (looseRange) {
     return looseRange;
   }
 
-  return findAnchoredTextRange(normalizedDoc, normalizedNeedle, preferredRange);
+  const compactDoc = normalizeTextForCompactSearch(docText);
+  const compactNeedle = normalizeTextForCompactSearch(selectedText).text;
+  if (compactNeedle) {
+    const compactRange = pickBestTextRange(
+      findNormalizedTextRanges(compactDoc, compactNeedle),
+      preferredRange
+    );
+    if (compactRange) {
+      return compactRange;
+    }
+
+    const compactSubsequenceRange = pickBestTextRange(
+      findCompactSubsequenceTextRanges(compactDoc, compactNeedle),
+      preferredRange
+    );
+    if (compactSubsequenceRange) {
+      return compactSubsequenceRange;
+    }
+  }
+
+  return (
+    findAnchoredTextRange(normalizedDoc, normalizedNeedle, preferredRange) ??
+    (compactNeedle
+      ? findAnchoredTextRange(compactDoc, compactNeedle, preferredRange)
+      : null)
+  );
 }
 
 function findDirectTextRanges(docText: string, needle: string) {
@@ -1568,6 +1760,85 @@ function findDirectTextRanges(docText: string, needle: string) {
       to: index + needle.length
     });
     index = docText.indexOf(needle, index + Math.max(1, needle.length));
+  }
+
+  return ranges;
+}
+
+function findNormalizedTextRanges(
+  normalizedDoc: { text: string; map: number[] },
+  normalizedNeedle: string
+) {
+  const ranges: DocumentTextRange[] = [];
+  let normalizedIndex = normalizedDoc.text.indexOf(normalizedNeedle);
+  while (normalizedIndex >= 0) {
+    const lastIndex = normalizedIndex + normalizedNeedle.length - 1;
+    const from = normalizedDoc.map[normalizedIndex];
+    const to = normalizedDoc.map[lastIndex] + 1;
+    if (Number.isFinite(from) && Number.isFinite(to) && from < to) {
+      ranges.push({ from, to });
+    }
+    normalizedIndex = normalizedDoc.text.indexOf(
+      normalizedNeedle,
+      normalizedIndex + Math.max(1, normalizedNeedle.length)
+    );
+  }
+
+  return ranges;
+}
+
+function findCompactSubsequenceTextRanges(
+  compactDoc: { text: string; map: number[] },
+  compactNeedle: string
+) {
+  const ranges: DocumentTextRange[] = [];
+  if (!compactNeedle) {
+    return ranges;
+  }
+
+  const prefixLength = Math.min(8, compactNeedle.length);
+  const prefix = compactNeedle.slice(0, prefixLength);
+  const maxSpan = compactNeedle.length * 2 + 200;
+  const starts = new Set(findAllTextIndexes(compactDoc.text, prefix));
+
+  if (starts.size === 0) {
+    for (const start of findAllTextIndexes(compactDoc.text, compactNeedle[0])) {
+      starts.add(start);
+    }
+  }
+
+  const seenRanges = new Set<string>();
+  for (const start of starts) {
+    let docCursor = start;
+    let needleCursor = 0;
+
+    while (docCursor < compactDoc.text.length && needleCursor < compactNeedle.length) {
+      if (compactDoc.text[docCursor] === compactNeedle[needleCursor]) {
+        needleCursor += 1;
+      }
+      docCursor += 1;
+
+      if (docCursor - start > maxSpan) {
+        break;
+      }
+    }
+
+    if (needleCursor !== compactNeedle.length) {
+      continue;
+    }
+
+    const lastDocIndex = docCursor - 1;
+    const from = compactDoc.map[start];
+    const to = compactDoc.map[lastDocIndex] + 1;
+    if (Number.isFinite(from) && Number.isFinite(to) && from < to) {
+      const key = `${from}:${to}`;
+      if (seenRanges.has(key)) {
+        continue;
+      }
+
+      seenRanges.add(key);
+      ranges.push({ from, to });
+    }
   }
 
   return ranges;
@@ -1709,9 +1980,15 @@ function sourceRangeMatchesSelectedText(sourceText: string, selectedText: string
     return true;
   }
 
+  const normalizedSource = normalizeTextForLooseSearch(sourceText).text;
+  const normalizedSelected = normalizeTextForLooseSearch(selectedText).text;
+  if (normalizedSource === normalizedSelected) {
+    return true;
+  }
+
   return (
-    normalizeTextForLooseSearch(sourceText).text ===
-    normalizeTextForLooseSearch(selectedText).text
+    normalizeTextForCompactSearch(sourceText).text ===
+    normalizeTextForCompactSearch(selectedText).text
   );
 }
 
@@ -1741,6 +2018,14 @@ function normalizeTextForLooseSearch(input: string) {
 
   for (let index = 0; index < input.length; index += 1) {
     let char = input[index];
+
+    const htmlSpaceEntityLength = getHtmlSpaceEntityLength(input, index);
+    if (htmlSpaceEntityLength > 0) {
+      emitSpace(index);
+      index += htmlSpaceEntityLength - 1;
+      atLineStart = false;
+      continue;
+    }
 
     if (char === "\r") {
       continue;
@@ -1801,7 +2086,17 @@ function normalizeTextForLooseSearch(input: string) {
       continue;
     }
 
-    if (char === "*" || char === "`") {
+    if (char === "\r") {
+      continue;
+    }
+
+    if (char === "\n") {
+      emitSpace(index);
+      atLineStart = true;
+      continue;
+    }
+
+    if (char === "*" || char === "`" || char === "_" || char === "~") {
       continue;
     }
 
@@ -1810,15 +2105,66 @@ function normalizeTextForLooseSearch(input: string) {
       continue;
     }
 
+    const normalizedChar = normalizeSearchChar(char);
+    if (!normalizedChar) {
+      continue;
+    }
+
     flushSpace();
-    chars.push(char);
-    map.push(index);
+    for (const outputChar of normalizedChar) {
+      chars.push(outputChar);
+      map.push(index);
+    }
   }
 
   return {
     text: chars.join("").trim(),
     map
   };
+}
+
+function normalizeTextForCompactSearch(input: string) {
+  const normalized = normalizeTextForLooseSearch(input);
+  const chars: string[] = [];
+  const map: number[] = [];
+
+  for (let index = 0; index < normalized.text.length; index += 1) {
+    if (/\s/.test(normalized.text[index])) {
+      continue;
+    }
+
+    chars.push(normalized.text[index]);
+    map.push(normalized.map[index]);
+  }
+
+  return {
+    text: chars.join(""),
+    map
+  };
+}
+
+function normalizeSearchChar(char: string) {
+  if (/[\u200B-\u200D\uFEFF]/.test(char)) {
+    return "";
+  }
+
+  if (/[|｜丨∣│¦]/.test(char)) {
+    return "|";
+  }
+
+  const normalized = char.normalize("NFKC");
+  return normalized.length > 0 ? normalized : char;
+}
+
+function getHtmlSpaceEntityLength(input: string, index: number) {
+  const rest = input.slice(index, index + 8).toLowerCase();
+  for (const entity of ["&nbsp;", "&ensp;", "&emsp;", "&thinsp;"]) {
+    if (rest.startsWith(entity)) {
+      return entity.length;
+    }
+  }
+
+  return 0;
 }
 
 function isMarkdownListMarker(input: string, index: number) {
@@ -1947,6 +2293,538 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
+interface HighlightRegistryLike {
+  set(name: string, highlight: unknown): void;
+  delete(name: string): boolean;
+}
+
+type HighlightConstructor = new (...ranges: Range[]) => unknown;
+
+interface DomTextPosition {
+  node: Text;
+  offset: number;
+}
+
+interface RenderedTextNodeInfo {
+  block: Element | null;
+  rect: DOMRect | null;
+}
+
+interface RenderedRangeCandidate {
+  ranges: Range[];
+  rect: DOMRect;
+}
+
+interface RenderedHighlightTarget {
+  root: HTMLElement;
+  editorView: EditorView | null;
+}
+
+function getHighlightApi() {
+  if (typeof CSS === "undefined") {
+    return null;
+  }
+
+  const registry = (CSS as typeof CSS & { highlights?: HighlightRegistryLike }).highlights;
+  const HighlightCtor = (window as typeof window & { Highlight?: HighlightConstructor }).Highlight;
+  if (!registry || !HighlightCtor) {
+    return null;
+  }
+
+  return { registry, HighlightCtor };
+}
+
+function getRenderedHighlightName(color: AnnotationColor) {
+  return `bera-annotation-rendered-${color}`;
+}
+
+function getAnnotationSourceRect(editorView: EditorView, annotation: BeraAnnotation) {
+  const sourceRange = getAnnotationRange(editorView.state.doc, annotation);
+  return sourceRange ? getSourceRangeRect(editorView, sourceRange) : null;
+}
+
+function getMarkdownPreviewRoots(
+  markdownView: MarkdownView | null,
+  editorRoot: HTMLElement | null
+) {
+  const containers = getMarkdownViewContainers(markdownView);
+  const candidates: HTMLElement[] = [];
+
+  for (const container of containers) {
+    candidates.push(
+      ...Array.from(
+        container.querySelectorAll<HTMLElement>(".markdown-preview-view, .markdown-rendered")
+      )
+    );
+  }
+
+  if (candidates.length === 0 && isMarkdownViewInPreviewMode(markdownView)) {
+    const fallback = containers[0];
+    if (fallback) {
+      candidates.push(fallback);
+    }
+  }
+
+  return uniqueTopLevelElements(candidates).filter((root) => {
+    if (!editorRoot) {
+      return true;
+    }
+
+    return root !== editorRoot && !root.contains(editorRoot) && !editorRoot.contains(root);
+  });
+}
+
+function getMarkdownViewContainers(markdownView: MarkdownView | null) {
+  if (!markdownView) {
+    return [];
+  }
+
+  const maybeView = markdownView as unknown as {
+    contentEl?: HTMLElement;
+    containerEl?: HTMLElement;
+    previewMode?: { containerEl?: HTMLElement };
+  };
+  const containers = [
+    maybeView.previewMode?.containerEl,
+    maybeView.contentEl,
+    maybeView.containerEl
+  ].filter((element): element is HTMLElement => Boolean(element));
+
+  return uniqueTopLevelElements(containers);
+}
+
+function isMarkdownViewInPreviewMode(markdownView: MarkdownView | null) {
+  const maybeMode = (markdownView as unknown as { getMode?: () => string } | null)?.getMode;
+  try {
+    return typeof maybeMode === "function" && maybeMode.call(markdownView) === "preview";
+  } catch (error) {
+    return false;
+  }
+}
+
+function uniqueTopLevelElements(elements: HTMLElement[]) {
+  const unique = Array.from(new Set(elements)).filter((element) => element.isConnected);
+  return unique.filter(
+    (element) => !unique.some((other) => other !== element && other.contains(element))
+  );
+}
+
+function findRenderedAnnotationRanges(
+  root: HTMLElement,
+  annotation: BeraAnnotation,
+  sourceRect: DOMRect | null
+): Range[] {
+  const normalizedNeedle = normalizeTextForLooseSearch(annotation.selectedText).text;
+  if (!normalizedNeedle) {
+    return [];
+  }
+
+  const renderedText = collectVisibleDomText(root);
+  const matches = getRenderedTextMatches(renderedText, annotation.selectedText, normalizedNeedle);
+  if (matches.length === 0) {
+    return [];
+  }
+
+  const candidates: RenderedRangeCandidate[] = [];
+
+  for (const match of matches) {
+    const start = match.map[match.index];
+    const end = match.map[match.index + match.length - 1];
+    if (!start || !end) {
+      continue;
+    }
+
+    const ranges = createRenderedMatchRanges(
+      match.map,
+      match.index,
+      match.length
+    );
+    const rect = mergeRangeRects(ranges);
+    if (!rect) {
+      continue;
+    }
+
+    candidates.push({ ranges, rect });
+  }
+
+  return pickBestRenderedRange(candidates, sourceRect)?.ranges ?? [];
+}
+
+function getRenderedTextMatches(
+  renderedText: { text: string; map: DomTextPosition[] },
+  selectedText: string,
+  normalizedNeedle: string
+) {
+  const directIndexes = findAllTextIndexes(renderedText.text, normalizedNeedle);
+  if (directIndexes.length > 0) {
+    return directIndexes.map((index) => ({
+      map: renderedText.map,
+      index,
+      length: normalizedNeedle.length
+    }));
+  }
+
+  const compactRenderedText = compactRenderedTextMap(renderedText);
+  const compactNeedle = normalizeTextForCompactSearch(selectedText).text;
+  if (!compactNeedle) {
+    return [];
+  }
+
+  return findAllTextIndexes(compactRenderedText.text, compactNeedle).map((index) => ({
+    map: compactRenderedText.map,
+    index,
+    length: compactNeedle.length
+  }));
+}
+
+function compactRenderedTextMap(renderedText: { text: string; map: DomTextPosition[] }) {
+  const chars: string[] = [];
+  const map: DomTextPosition[] = [];
+
+  for (let index = 0; index < renderedText.text.length; index += 1) {
+    if (/\s/.test(renderedText.text[index])) {
+      continue;
+    }
+
+    chars.push(renderedText.text[index]);
+    map.push(renderedText.map[index]);
+  }
+
+  return {
+    text: chars.join(""),
+    map
+  };
+}
+
+function createRenderedMatchRanges(
+  map: DomTextPosition[],
+  startIndex: number,
+  length: number
+) {
+  const ranges: Range[] = [];
+  let currentNode: Text | null = null;
+  let rangeStart = 0;
+  let previousOffset = -1;
+
+  const closeRange = () => {
+    if (!currentNode || previousOffset < rangeStart) {
+      return;
+    }
+
+    const range = document.createRange();
+    range.setStart(currentNode, rangeStart);
+    range.setEnd(currentNode, previousOffset + 1);
+    if (getUsableRangeRect(range)) {
+      ranges.push(range);
+    }
+  };
+
+  for (let cursor = startIndex; cursor < startIndex + length; cursor += 1) {
+    const position = map[cursor];
+    if (!position) {
+      continue;
+    }
+
+    if (
+      currentNode !== position.node ||
+      (previousOffset >= 0 && position.offset > previousOffset + 1)
+    ) {
+      closeRange();
+      currentNode = position.node;
+      rangeStart = position.offset;
+      previousOffset = position.offset;
+      continue;
+    }
+
+    previousOffset = Math.max(previousOffset, position.offset);
+  }
+
+  closeRange();
+  return ranges;
+}
+
+function collectVisibleDomText(root: HTMLElement) {
+  const chars: string[] = [];
+  const map: DomTextPosition[] = [];
+  let pendingSpace: DomTextPosition | null = null;
+
+  const emitSpace = (position: DomTextPosition) => {
+    if (chars.length === 0 || chars[chars.length - 1] === " ") {
+      return;
+    }
+
+    pendingSpace = position;
+  };
+
+  const flushSpace = () => {
+    if (!pendingSpace) {
+      return;
+    }
+
+    chars.push(" ");
+    map.push(pendingSpace);
+    pendingSpace = null;
+  };
+
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      return shouldUseRenderedTextNode(node as Text, root)
+        ? NodeFilter.FILTER_ACCEPT
+        : NodeFilter.FILTER_REJECT;
+    }
+  });
+
+  let current = walker.nextNode() as Text | null;
+  let previousInfo: RenderedTextNodeInfo | null = null;
+  while (current) {
+    const value = current.data;
+    const firstTextOffset = getFirstNonWhitespaceOffset(value);
+    if (
+      firstTextOffset !== null &&
+      shouldInsertRenderedBoundarySpace(previousInfo, current, root)
+    ) {
+      emitSpace({ node: current, offset: firstTextOffset });
+    }
+
+    for (let offset = 0; offset < value.length; offset += 1) {
+      const char = value[offset];
+      if (char === "\r") {
+        continue;
+      }
+
+      const position = { node: current, offset };
+      if (/\s/.test(char)) {
+        emitSpace(position);
+        continue;
+      }
+
+      const normalizedChar = normalizeSearchChar(char);
+      if (!normalizedChar) {
+        continue;
+      }
+
+      flushSpace();
+      for (const outputChar of normalizedChar) {
+        chars.push(outputChar);
+        map.push(position);
+      }
+    }
+
+    previousInfo = getRenderedTextNodeInfo(current, root);
+    current = walker.nextNode() as Text | null;
+  }
+
+  return {
+    text: chars.join(""),
+    map
+  };
+}
+
+function getFirstNonWhitespaceOffset(value: string) {
+  for (let offset = 0; offset < value.length; offset += 1) {
+    if (!/\s/.test(value[offset])) {
+      return offset;
+    }
+  }
+
+  return null;
+}
+
+function shouldInsertRenderedBoundarySpace(
+  previousInfo: RenderedTextNodeInfo | null,
+  current: Text,
+  root: HTMLElement
+) {
+  if (!previousInfo) {
+    return false;
+  }
+
+  const currentInfo = getRenderedTextNodeInfo(current, root);
+  if (previousInfo.block && currentInfo.block && previousInfo.block !== currentInfo.block) {
+    return true;
+  }
+
+  if (!previousInfo.rect || !currentInfo.rect) {
+    return false;
+  }
+
+  return currentInfo.rect.top > previousInfo.rect.bottom + 2;
+}
+
+function getRenderedTextNodeInfo(node: Text, root: HTMLElement): RenderedTextNodeInfo {
+  return {
+    block: getRenderedBlockElement(node.parentElement, root),
+    rect: getTextNodeRect(node)
+  };
+}
+
+function getRenderedBlockElement(element: HTMLElement | null, root: HTMLElement) {
+  for (let current = element; current && current !== root; current = current.parentElement) {
+    const style = window.getComputedStyle(current);
+    if (
+      style.display === "block" ||
+      style.display === "list-item" ||
+      style.display === "table" ||
+      style.display === "flex" ||
+      style.display === "grid"
+    ) {
+      return current;
+    }
+  }
+
+  return root;
+}
+
+function getTextNodeRect(node: Text) {
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  return getUsableRangeRect(range);
+}
+
+function shouldUseRenderedTextNode(node: Text, root: HTMLElement) {
+  if (!node.data.trim()) {
+    return false;
+  }
+
+  const parent = node.parentElement;
+  if (!parent || !root.contains(parent)) {
+    return false;
+  }
+
+  if (
+    parent.closest(
+      ".bera-annotation-floating-toolbar, .bera-annotation-note-popover, .cm-gutters, .cm-tooltip, .cm-selectionLayer, .cm-cursorLayer"
+    )
+  ) {
+    return false;
+  }
+
+  for (let el: HTMLElement | null = parent; el && el !== root.parentElement; el = el.parentElement) {
+    const style = window.getComputedStyle(el);
+    if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+      return false;
+    }
+
+    if (el === root) {
+      break;
+    }
+  }
+
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  const rect = getUsableRangeRect(range);
+  return rect !== null;
+}
+
+function getUsableRangeRect(range: Range) {
+  const rects = Array.from(range.getClientRects()).filter(
+    (rect) => rect.width > 0 && rect.height > 0
+  );
+  if (rects.length > 0) {
+    return mergeRects(rects);
+  }
+
+  const rect = range.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0 ? rect : null;
+}
+
+function mergeRangeRects(ranges: Range[]) {
+  const rects = ranges
+    .map((range) => getUsableRangeRect(range))
+    .filter((rect): rect is DOMRect => rect !== null);
+
+  return rects.length > 0 ? mergeRects(rects) : null;
+}
+
+function mergeRects(rects: DOMRect[]) {
+  const first = rects[0];
+  const box = rects.reduce(
+    (acc, rect) => ({
+      top: Math.min(acc.top, rect.top),
+      bottom: Math.max(acc.bottom, rect.bottom),
+      left: Math.min(acc.left, rect.left),
+      right: Math.max(acc.right, rect.right)
+    }),
+    {
+      top: first.top,
+      bottom: first.bottom,
+      left: first.left,
+      right: first.right
+    }
+  );
+
+  return DOMRect.fromRect({
+    x: box.left,
+    y: box.top,
+    width: box.right - box.left,
+    height: box.bottom - box.top
+  });
+}
+
+function getSourceRangeRect(
+  editorView: EditorView,
+  range: { from: number; to: number }
+) {
+  const fromCoords = editorView.coordsAtPos(range.from);
+  const toCoords = editorView.coordsAtPos(range.to);
+  if (!fromCoords && !toCoords) {
+    return null;
+  }
+
+  const top = Math.min(fromCoords?.top ?? toCoords!.top, toCoords?.top ?? fromCoords!.top);
+  const bottom = Math.max(
+    fromCoords?.bottom ?? toCoords!.bottom,
+    toCoords?.bottom ?? fromCoords!.bottom
+  );
+  const left = Math.min(fromCoords?.left ?? toCoords!.left, toCoords?.left ?? fromCoords!.left);
+  const right = Math.max(
+    fromCoords?.right ?? toCoords!.right,
+    toCoords?.right ?? fromCoords!.right
+  );
+
+  return DOMRect.fromRect({
+    x: left,
+    y: top,
+    width: right - left,
+    height: bottom - top
+  });
+}
+
+function pickBestRenderedRange(
+  candidates: RenderedRangeCandidate[],
+  sourceRect: DOMRect | null
+) {
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  if (!sourceRect) {
+    return candidates[0];
+  }
+
+  const sourceCenter = getRectCenter(sourceRect);
+  return candidates
+    .slice()
+    .sort((a, b) => {
+      const aCenter = getRectCenter(a.rect);
+      const bCenter = getRectCenter(b.rect);
+      return distanceSquared(aCenter, sourceCenter) - distanceSquared(bCenter, sourceCenter);
+    })[0];
+}
+
+function getRectCenter(rect: DOMRect) {
+  return {
+    x: rect.left + rect.width / 2,
+    y: rect.top + rect.height / 2
+  };
+}
+
+function distanceSquared(a: { x: number; y: number }, b: { x: number; y: number }) {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return dx * dx + dy * dy;
+}
+
 function buildDecorations(doc: EditorView["state"]["doc"], annotations: BeraAnnotation[]) {
   const builder = new RangeSetBuilder<Decoration>();
 
@@ -2001,12 +2879,18 @@ function getAnnotationRange(doc: EditorView["state"]["doc"], annotation: BeraAnn
     }
   }
 
-  const fallbackIndex = doc.toString().indexOf(annotation.selectedText);
+  const docText = doc.toString();
+  const fallbackIndex = docText.indexOf(annotation.selectedText);
   if (fallbackIndex >= 0) {
     return {
       from: fallbackIndex,
       to: fallbackIndex + annotation.selectedText.length
     };
+  }
+
+  const looseFallback = findSelectedTextRange(docText, annotation.selectedText);
+  if (looseFallback) {
+    return looseFallback;
   }
 
   return null;
