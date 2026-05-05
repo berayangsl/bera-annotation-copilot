@@ -38,6 +38,18 @@ dist/brat-release-assets/
 ## 已发布
 
 - Repo：`https://github.com/berayangsl/bera-annotation-copilot`
+- Release：`https://github.com/berayangsl/bera-annotation-copilot/releases/tag/0.1.4`
+- Tag：`0.1.4`
+- Assets：`manifest.json`、`main.js`、`styles.css`
+- Release 类型：正式 release
+
+`0.1.4` 更新批注状态显示：`unreviewed / discussed / distilled / parked` 的底层 key 保持不变，UI 显示调整为“待回收 / 已回收 / 已沉淀 / 暂缓”；review pack 导出状态时同时带中文标签和底层 key，方便投研批注回收和跨 AI 交接。
+
+---
+
+## 历史发布
+
+- Repo：`https://github.com/berayangsl/bera-annotation-copilot`
 - Release：`https://github.com/berayangsl/bera-annotation-copilot/releases/tag/0.1.3`
 - Tag：`0.1.3`
 - Assets：`manifest.json`、`main.js`、`styles.css`

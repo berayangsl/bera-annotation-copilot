@@ -53,10 +53,10 @@ const SWATCH_COLORS: Record<AnnotationColor, string> = {
   purple: "#a893d3"
 };
 const STATUS_LABELS: Record<AnnotationStatus, string> = {
-  unreviewed: "未回顾",
-  discussed: "已讨论",
+  unreviewed: "待回收",
+  discussed: "已回收",
   distilled: "已沉淀",
-  parked: "暂存"
+  parked: "暂缓"
 };
 
 interface BeraAnnotationSettings {
@@ -2929,7 +2929,7 @@ function buildReviewPack(sourceLabel: string, annotations: BeraAnnotation[]) {
       annotation.note ? `> ${annotation.note.replace(/\n/g, "\n> ")}` : "> ",
       "",
       `颜色：${annotation.color}`,
-      `状态：${annotation.status}`,
+      `状态：${STATUS_LABELS[annotation.status]} (${annotation.status})`,
       `原文位置：line ${annotation.anchor.fromLine + 1}, ch ${annotation.anchor.fromCh}`
     );
   });
