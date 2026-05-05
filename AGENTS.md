@@ -51,7 +51,7 @@ C:\Users\sheng\Documents\obsidian\.obsidian\plugins\bera-annotation-copilot\
 
 - 桌面端来源：本地工程构建后同步到 `C:\Users\sheng\Documents\obsidian\.obsidian\plugins\bera-annotation-copilot\`。
 - iOS / iPadOS 来源：GitHub release assets，经 BRAT 安装。
-- 当前 `0.1.0` 已确认桌面 Vault 插件目录与 BRAT release assets 的 `manifest.json`、`main.js`、`styles.css` hash 一致。
+- 当前 `0.1.3` 已确认桌面 Vault 插件目录、BRAT release assets 与 GitHub release assets 的 `manifest.json`、`main.js`、`styles.css` hash 一致。
 - 后续只运行 `npm run build` 时，只能视为桌面端本地新版；iOS 不会同步变新。
 - 需要跨端一致时，必须 bump version，运行 `npm run package`，推送 git，创建同版本 GitHub release，并上传 `dist/brat-release-assets/` 三件套。
 - 若改动涉及 `Bera_Annotations/`、sidecar JSON、annotation 字段或索引格式，必须保持向后兼容，或先明确移动端 release blocker，避免桌面端写出 iOS 旧版读不了的数据。
